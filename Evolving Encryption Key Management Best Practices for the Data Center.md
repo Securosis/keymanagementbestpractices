@@ -110,3 +110,55 @@ There are many more technical best practices beyond the scope of this research, 
 * Don't neglect core security requirements.
 
 In our next section we will start looking at specific use cases, some of which we have already hinted at.
+
+# Use Cases
+
+Now that we've talked about the best practices, it's time to transition and cover common use cases. Well, mostly common; since one of our goals in this research is to highlight emerging practices a couple of our use cases cover newer data-at-rest key management scenarios, while the rest are more-traditional options.
+
+## Traditional Data Center Storage
+
+It seems a bit weird to use the word "traditional" to describe a data center, but people give us strange looks when we call the most widely deployed storage technologies "legacy". We'd say "old school", but that sounds a bit too retro. Perhaps we should just say "big storage stuff that doesn't involve cloud or other weirdness". 
+
+There are three major types of data at rest storage we commonly see encrypted in traditional data centers: SAN/NAS, backup tapes, and databases. On occasion we also see file servers, but those are in the minority. Each of these is handled slightly differently, but there are three "meta-architectures" most commonly used:
+
+* *Silos*. Some storage tools include their own encryption capabilities, managed with the silo of the application/storage stack. For example, a backup tape system with built-in encryption. The keys are managed by the tool within its own stack. In this case an external key manager isn't used, and thus can lead to some risk of application dependencies and key loss unless it's a really well designed product.
+* *Centralized key management*. Instead of managing the keys locally, a central, dedicated key management tool is used. In many cases organizations start with silos and then integrate those tools with central key management for advantages like better separation of duties, security, audit, and portability. Thanks to increasing support for [KMIP and the PKCS 11 standards](https://en.wikipedia.org/wiki/Key_Management_Interoperability_Protocol) many major products are now able to communicate key management functions and key exchanges.
+* *Distributed key management*. This option is very common when there are multiple data centers either sharing information or used for disaster recovery (e.g. a hot standby site). While you can technically route everything to a single key manager this, like any single point of failure, is a recipe for disaster. Enterprise-class key management products can synchronize keys between multiple key managers. Remote storage tools should connect to the key manager in their same physical location to avoid WAN network dependencies. The biggest issue with this design is typically ensuring the different locations synchronize quickly enough, which tends to be more an issue for distributed applications balanced across locations than it is for a hot standby site where data changes aren't happening on both sides simultaneously. Another important issue is making sure you can centralize manage the distributed deployment instead of having to log into everything separately.
+
+Each of those meta-architectures can handle managing keys for any of the storage options we see (assuming the tools are compatible), even using different products. The encryption engine doesn't need to be part of the same tool as the key manager as long as both are able to communicate.
+
+And that's the clincher in terms of requirements — the key manager and the encryption engines not only need to speak the same language, they need a network connection with acceptable performance. This will often define the physical and logical location of the key manager, and may require additional distribution even within a single data center using multiple key managers. Also, there is *never a single key manager*. You need more than one for availability, in either a cluster or hot standby relationship.
+
+As mentioned in our best practices, some tools support distributing only the needed keys to the "local" key manager, which can strike a good balance between performance and security. 
+
+![Distributed Data Center Architecture](./traditional-distributed.png)
+
+## Applications
+
+There are as many different ways to encrypt an application as there are developers in the world (just ask them). That said, we once again tend to see most organizations coalescing around a smaller set of options:
+
+* *Custom*. Developers program their own encryption (often using common encryption libraries) and design and implement their own key management. These are rarely standards-based and can become problematic if you late need to add key rotation, audit, or other security or compliance features. 
+* *Custom with external key management*. The encryption itself is, again, custom programmed but instead of handling key management itself, the application communicates with a central key manager, usually using an API. Architecturally the key manager needs to be relatively close to the application server to reduce latency, depending on the particulars of how the application is programmed. Also, security is obviously closely tied to how well the application is programmed.
+* *Key manager software agent or SDK*. This is the same architecture, but in this case the application uses a software agent or pre-configured SDK provided with the key manager. This is a great option since it often reduces common errors in building encryption systems and *should* speed up integration and offer more features and easier management. Well, assuming everything works as advertised.
+* *Key manager-based encryption*. That's an awkward way of saying that instead of providing the encryption keys to the application, the application provides the data to the key manager and gets encrypted data in return. 
+
+We deliberately skipped file and database encryption, since those are variants of our "traditional data center storage" category, but we do see both integrated into different application architectures. 
+
+Based on our client work (in other words, a lot of anecdotes), application encryption seems to be the fastest growing option. It's also agnostic as to your data center architecture, assuming the application can reach the key manager with adequate performance. It doesn't really care if it's in the cloud, on premise, or in a hybrid cloud deployment.
+
+## Hybrid Cloud
+
+Speaking of hybrid cloud, after application encryption (usually in cloud deployments) this is where we see the most questions. There are two main use cases:
+
+* *Extending existing key management to the cloud*. Many organizations already have a key manager they are happy with. As they move into the cloud they may either want to maintain consistency by using the same product, or need to support a migrating application without having to gut the key management to build something new. One approach is to always call back over the network to the on-premise key manager. This reduces the need for architectural changes (or additional licenses), but often runs into latency and performance issues (even with a direct network connection). Alternatively you can deploy a virtual appliance version of the key manager as a "bastion" host and synchronize the keys so assets in the cloud connect to the distributed virtual server for better performance.
+* *Building a root of trust for cloud deployments*. Even when you are fully comfortable deploying your key manager in the cloud, you may still want an on-premise key manager to retain backups of keys or support interoperability across cloud providers.
+
+Generally you will want a virtual version of the key manager running within the cloud to meet performance needs, even though you can technically route all requests back to the data center. It's still really important to synchronize the keys, backups, and even logs back on-premise or to multiple, distributed cloud-based key managers since no single instance/virtual machine is ever reliable.
+
+![Hybrid Cloud Architecture](./hybrid-cloud.png)
+
+## Bring Your Own Key
+
+This is a very new option in some cloud providers that allows you to use an encryption service/product within the cloud, but keep ownership of your keys. For example, you provide your own file encryption key to the cloud provider who then uses it to encrypt your data, instead of using a provider-managed key.
+
+The name of the game here is "proprietary". Each cloud provider has different ways of supporting customer managed keys. You nearly always need to meet stringent network and location requirements if you want to host the key manager yourself, or you need to use the cloud provider's key management service configured so you manage the keys yourself. 
